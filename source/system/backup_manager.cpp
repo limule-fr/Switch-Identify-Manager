@@ -3,8 +3,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <fcntl.h>
 #include <fstream>
 #include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <utility>
 
 namespace
@@ -44,11 +48,158 @@ namespace
         return context + error.message();
     }
 
+    bool isWithinPath(
+        const std::filesystem::path& path,
+        const std::filesystem::path& root
+    )
+    {
+        std::string candidate;
+        std::string allowed;
+#ifdef __SWITCH__
+        candidate = path.lexically_normal().generic_string();
+        allowed = root.lexically_normal().generic_string();
+#else
+        std::error_code error;
+        candidate = std::filesystem::absolute(path, error)
+                        .lexically_normal()
+                        .generic_string();
+        if (error)
+        {
+            return false;
+        }
+        allowed = std::filesystem::absolute(root, error)
+                      .lexically_normal()
+                      .generic_string();
+        if (error)
+        {
+            return false;
+        }
+#endif
+        if (candidate == allowed)
+        {
+            return true;
+        }
+        if (allowed.empty() || allowed.back() != '/')
+        {
+            allowed += '/';
+        }
+        return candidate.compare(0, allowed.size(), allowed) == 0;
+    }
+
+    bool hasNoSymlinkComponents(
+        const std::filesystem::path& path,
+        bool allowMissing,
+        std::string& errorMessage
+    )
+    {
+        for (const std::filesystem::path& component : path)
+        {
+            if (component == "." || component == "..")
+            {
+                errorMessage = "Les chemins contenant . ou .. sont refuses.";
+                return false;
+            }
+        }
+#ifdef __SWITCH__
+        std::string nativePath = path.generic_string();
+        if (nativePath.compare(0, 6, "sdmc:/") != 0)
+        {
+            errorMessage = "Le chemin doit se trouver sur la carte SD.";
+            return false;
+        }
+        struct stat rootStatus
+        {
+        };
+        if (lstat("sdmc:/", &rootStatus) != 0
+            || S_ISLNK(rootStatus.st_mode)
+            || !S_ISDIR(rootStatus.st_mode))
+        {
+            errorMessage = "La carte SD est indisponible ou invalide.";
+            return false;
+        }
+        std::string current = "sdmc:/";
+        std::size_t offset = 6;
+#else
+        std::error_code absoluteError;
+        const std::filesystem::path absolutePath =
+            std::filesystem::absolute(path, absoluteError);
+        if (absoluteError)
+        {
+            errorMessage = pathError(
+                "Impossible de normaliser le chemin : ",
+                absoluteError
+            );
+            return false;
+        }
+        const std::string nativePath = absolutePath.generic_string();
+        std::string current = nativePath.empty() || nativePath.front() != '/'
+            ? std::string()
+            : std::string("/");
+        std::size_t offset = current.empty() ? 0 : 1;
+#endif
+        bool missingComponent = false;
+        while (offset < nativePath.size())
+        {
+            const std::size_t separator = nativePath.find('/', offset);
+            const std::size_t end = separator == std::string::npos
+                ? nativePath.size()
+                : separator;
+            const std::string component =
+                nativePath.substr(offset, end - offset);
+            offset = separator == std::string::npos
+                ? nativePath.size()
+                : separator + 1;
+            if (component.empty())
+            {
+                continue;
+            }
+            if (component == "." || component == "..")
+            {
+                errorMessage = "Les chemins contenant . ou .. sont refuses.";
+                return false;
+            }
+            if (missingComponent)
+            {
+                continue;
+            }
+            if (!current.empty() && current.back() != '/')
+            {
+                current += '/';
+            }
+            current += component;
+
+            struct stat status
+            {
+            };
+            if (lstat(current.c_str(), &status) != 0)
+            {
+                if (allowMissing && errno == ENOENT)
+                {
+                    missingComponent = true;
+                    continue;
+                }
+                errorMessage = "Impossible d'inspecter un composant du chemin.";
+                return false;
+            }
+            if (S_ISLNK(status.st_mode))
+            {
+                errorMessage =
+                    "Les liens symboliques sont refuses dans les chemins sensibles.";
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool prepareBackupDirectory(
         const std::filesystem::path& path,
         std::string& errorMessage
     )
     {
+        if (!hasNoSymlinkComponents(path, true, errorMessage))
+        {
+            return false;
+        }
         std::error_code error;
         std::filesystem::file_status status =
             std::filesystem::symlink_status(path, error);
@@ -85,7 +236,193 @@ namespace
             errorMessage = "Dossier de sauvegardes introuvable ou invalide.";
             return false;
         }
+        if (!hasNoSymlinkComponents(path, false, errorMessage))
+        {
+            return false;
+        }
         return true;
+    }
+
+    bool writeFileExclusively(
+        const std::filesystem::path& path,
+        const std::string& contents,
+        std::string& errorMessage
+    )
+    {
+        int flags = O_WRONLY | O_CREAT | O_EXCL;
+#ifdef O_NOFOLLOW
+        flags |= O_NOFOLLOW;
+#endif
+        const int descriptor = open(path.c_str(), flags, S_IRUSR | S_IWUSR);
+        if (descriptor < 0)
+        {
+            errorMessage = std::error_code(errno, std::generic_category()).message();
+            return false;
+        }
+
+        std::size_t offset = 0;
+        while (offset < contents.size())
+        {
+            const ssize_t written = write(
+                descriptor,
+                contents.data() + offset,
+                contents.size() - offset
+            );
+            if (written <= 0)
+            {
+                const int writeError = errno;
+                close(descriptor);
+                if (unlink(path.c_str()) != 0)
+                {
+                    errorMessage = "Could not remove partial checksum: "
+                        + std::error_code(errno, std::generic_category()).message();
+                }
+                else
+                {
+                    errorMessage =
+                        std::error_code(writeError, std::generic_category()).message();
+                }
+                return false;
+            }
+            offset += static_cast<std::size_t>(written);
+        }
+        if (close(descriptor) != 0)
+        {
+            const int closeError = errno;
+            if (unlink(path.c_str()) != 0)
+            {
+                errorMessage = "Could not remove partial checksum: "
+                    + std::error_code(errno, std::generic_category()).message();
+            }
+            else
+            {
+                errorMessage =
+                    std::error_code(closeError, std::generic_category()).message();
+            }
+            return false;
+        }
+        return true;
+    }
+
+    bool copyFileExclusively(
+        const std::filesystem::path& sourcePath,
+        const std::filesystem::path& destinationPath,
+        std::string& errorMessage
+    )
+    {
+        int sourceFlags = O_RDONLY;
+#ifdef O_NOFOLLOW
+        sourceFlags |= O_NOFOLLOW;
+#endif
+        const int source = open(sourcePath.c_str(), sourceFlags);
+        if (source < 0)
+        {
+            errorMessage =
+                std::error_code(errno, std::generic_category()).message();
+            return false;
+        }
+
+        struct stat sourceStatus
+        {
+        };
+        if (fstat(source, &sourceStatus) != 0)
+        {
+            const int statError = errno;
+            close(source);
+            errorMessage =
+                std::error_code(statError, std::generic_category()).message();
+            return false;
+        }
+        if (!S_ISREG(sourceStatus.st_mode))
+        {
+            close(source);
+            errorMessage = "Source is not a regular file.";
+            return false;
+        }
+
+        int destinationFlags = O_WRONLY | O_CREAT | O_EXCL;
+#ifdef O_NOFOLLOW
+        destinationFlags |= O_NOFOLLOW;
+#endif
+        const int destination = open(
+            destinationPath.c_str(),
+            destinationFlags,
+            S_IRUSR | S_IWUSR
+        );
+        if (destination < 0)
+        {
+            const int openError = errno;
+            close(source);
+            errorMessage =
+                std::error_code(openError, std::generic_category()).message();
+            return false;
+        }
+
+        char buffer[8192];
+        bool success = true;
+        while (true)
+        {
+            const ssize_t count = read(source, buffer, sizeof(buffer));
+            if (count == 0)
+            {
+                break;
+            }
+            if (count < 0)
+            {
+                errorMessage =
+                    std::error_code(errno, std::generic_category()).message();
+                success = false;
+                break;
+            }
+
+            ssize_t writtenTotal = 0;
+            while (writtenTotal < count)
+            {
+                const ssize_t written = write(
+                    destination,
+                    buffer + writtenTotal,
+                    static_cast<std::size_t>(count - writtenTotal)
+                );
+                if (written <= 0)
+                {
+                    errorMessage =
+                        std::error_code(errno, std::generic_category()).message();
+                    success = false;
+                    break;
+                }
+                writtenTotal += written;
+            }
+            if (!success)
+            {
+                break;
+            }
+        }
+
+        const int sourceCloseResult = close(source);
+        const int sourceCloseError = sourceCloseResult == 0 ? 0 : errno;
+        const int destinationCloseResult = close(destination);
+        const int destinationCloseError =
+            destinationCloseResult == 0 ? 0 : errno;
+        if (success
+            && (sourceCloseError != 0 || destinationCloseError != 0))
+        {
+            errorMessage = std::error_code(
+                sourceCloseError != 0
+                    ? sourceCloseError
+                    : destinationCloseError,
+                std::generic_category()
+            ).message();
+            success = false;
+        }
+        if (!success)
+        {
+            if (unlink(destinationPath.c_str()) != 0)
+            {
+                errorMessage += "; partial destination could not be removed: "
+                    + std::error_code(errno, std::generic_category()).message();
+            }
+        }
+        return success;
     }
 
     BackupEntry inspectFile(
@@ -228,6 +565,17 @@ BackupManager::BackupManager(std::filesystem::path backupDirectory)
 BackupScanResult BackupManager::scan() const
 {
     BackupScanResult result;
+    std::string pathValidationError;
+    if (!hasNoSymlinkComponents(
+            backupDirectory,
+            false,
+            pathValidationError
+        ))
+    {
+        result.error = pathValidationError;
+        return result;
+    }
+
     std::error_code error;
     const std::filesystem::file_status directoryStatus =
         std::filesystem::symlink_status(backupDirectory, error);
@@ -325,6 +673,18 @@ BackupOperationResult BackupManager::createBackup(
     const std::filesystem::path& sourcePath
 ) const
 {
+    std::string pathValidationError;
+    if (!hasNoSymlinkComponents(sourcePath, false, pathValidationError))
+    {
+        return {false, pathValidationError, {}};
+    }
+#ifdef __SWITCH__
+    if (!isWithinPath(sourcePath, "sdmc:/"))
+    {
+        return {false, "La source doit se trouver sur la carte SD.", {}};
+    }
+#endif
+
     std::error_code error;
     const std::filesystem::file_status sourceStatus =
         std::filesystem::symlink_status(sourcePath, error);
@@ -360,8 +720,7 @@ BackupOperationResult BackupManager::createBackup(
     }
 
     const std::filesystem::path backupPath = backupDirectory / name;
-    const std::filesystem::path checksumPath =
-        backupPath.string() + ".sha256";
+    const std::filesystem::path checksumPath = backupPath.string() + ".sha256";
     const auto pathExists = [&error](
         const std::filesystem::path& path,
         bool& exists
@@ -405,17 +764,12 @@ BackupOperationResult BackupManager::createBackup(
         return {false, "La somme de reference existe deja.", checksumPath};
     }
 
-    error.clear();
-    if (!std::filesystem::copy_file(
-            sourcePath,
-            backupPath,
-            std::filesystem::copy_options::none,
-            error
-        ))
+    std::string copyError;
+    if (!copyFileExclusively(sourcePath, backupPath, copyError))
     {
         return {
             false,
-            pathError("Impossible de creer la sauvegarde : ", error),
+            "Impossible de creer la sauvegarde : " + copyError,
             backupPath
         };
     }
@@ -433,28 +787,19 @@ BackupOperationResult BackupManager::createBackup(
         };
     }
 
-    std::ofstream checksumFile(checksumPath, std::ios::out | std::ios::binary);
-    if (!checksumFile)
+    std::string checksumWriteError;
+    if (!writeFileExclusively(
+            checksumPath,
+            hash.digest + '\n',
+            checksumWriteError
+        ))
     {
         std::string cleanupMessage;
         removeCreatedFile(backupPath, cleanupMessage);
         return {
             false,
-            "Impossible d'ecrire la somme de reference de la sauvegarde."
-                + cleanupMessage,
-            checksumPath
-        };
-    }
-    checksumFile << hash.digest << '\n';
-    checksumFile.close();
-    if (!checksumFile)
-    {
-        std::string cleanupMessage;
-        removeCreatedFile(checksumPath, cleanupMessage);
-        removeCreatedFile(backupPath, cleanupMessage);
-        return {
-            false,
-            "Erreur pendant l'ecriture de la somme de reference."
+            "Impossible d'ecrire la somme de reference de la sauvegarde : "
+                + checksumWriteError
                 + cleanupMessage,
             checksumPath
         };
@@ -469,9 +814,15 @@ BackupOperationResult BackupManager::createBackup(
 
 BackupOperationResult BackupManager::restoreBackup(
     const std::string& backupName,
-    const std::filesystem::path& destinationPath
+    const std::filesystem::path& destinationPath,
+    bool confirmed
 ) const
 {
+    if (!confirmed)
+    {
+        return {false, "Restauration non confirmee.", destinationPath};
+    }
+
     const std::filesystem::path requestedName(backupName);
     if (backupName.empty()
         || requestedName.filename() != requestedName
@@ -506,6 +857,38 @@ BackupOperationResult BackupManager::restoreBackup(
             false,
             "La sauvegarde doit avoir une somme de reference valide avant restauration.",
             {}
+        };
+    }
+
+    std::string pathValidationError;
+    if (!hasNoSymlinkComponents(
+            backupDirectory / backupName,
+            false,
+            pathValidationError
+        ))
+    {
+        return {false, pathValidationError, {}};
+    }
+    if (!hasNoSymlinkComponents(
+            destinationPath.parent_path().empty()
+                ? std::filesystem::current_path()
+                : destinationPath.parent_path(),
+            false,
+            pathValidationError
+        ))
+    {
+        return {false, pathValidationError, destinationPath};
+    }
+    const std::filesystem::path allowedRestoreRoot =
+        backupDirectory.parent_path().empty()
+            ? std::filesystem::path(".")
+            : backupDirectory.parent_path();
+    if (!isWithinPath(destinationPath, allowedRestoreRoot))
+    {
+        return {
+            false,
+            "La restauration doit rester dans le dossier SIM autorise.",
+            destinationPath
         };
     }
 
@@ -550,18 +933,13 @@ BackupOperationResult BackupManager::restoreBackup(
         }
     }
 
-    error.clear();
     const std::filesystem::path sourcePath = backupDirectory / backupName;
-    if (!std::filesystem::copy_file(
-            sourcePath,
-            destinationPath,
-            std::filesystem::copy_options::none,
-            error
-        ))
+    std::string copyError;
+    if (!copyFileExclusively(sourcePath, destinationPath, copyError))
     {
         return {
             false,
-            pathError("Impossible de restaurer la sauvegarde : ", error),
+            "Impossible de restaurer la sauvegarde : " + copyError,
             destinationPath
         };
     }

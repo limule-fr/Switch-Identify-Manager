@@ -26,6 +26,7 @@ public:
     explicit SettingsManager(std::filesystem::path configPath = "sim.conf");
 
     SettingsLoadResult load() const;
+    SettingsSaveResult ensureParentDirectory() const;
     SettingsSaveResult save(Language language) const;
 
 private:

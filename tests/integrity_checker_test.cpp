@@ -85,9 +85,10 @@ namespace
             passed = false;
         }
         if (report.items[1].points != 0
-            || report.items[1].status != CheckStatus::WARNING)
+            || report.items[1].status != CheckStatus::NOT_VERIFIED
+            || report.maximumVerifiedScore != 75)
         {
-            std::cerr << "Unavailable PC system diagnostics received points.\n";
+            std::cerr << "Unavailable system check was not marked unverified.\n";
             passed = false;
         }
         int totalMaximumPoints = 0;
@@ -149,7 +150,8 @@ namespace
         ).run();
         if (report.score != 75
             || report.items[2].points != 20
-            || report.items[3].points != 15)
+            || report.items[3].points != 15
+            || report.maximumVerifiedScore != 75)
         {
             std::cerr << "Integrity score did not reflect verified backup and settings.\n";
             return false;
@@ -165,9 +167,42 @@ namespace
             systemInspector,
             settingsManager
         ).run();
-        if (report.score != 65 || report.items[2].points != 10)
+        if (report.score != 65
+            || report.items[2].points != 10
+            || report.maximumVerifiedScore != 75)
         {
             std::cerr << "Unverified backup did not reduce the integrity score.\n";
+            return false;
+        }
+        return true;
+    }
+
+    bool checkBackupScanFailure()
+    {
+        TemporaryDirectory temporaryDirectory;
+        const std::filesystem::path invalidBackupDirectory =
+            temporaryDirectory.getPath() / "not-a-directory";
+        {
+            std::ofstream file(invalidBackupDirectory);
+            file << "file";
+        }
+
+        ProdInfoSimulator prodInfo;
+        BackupManager backupManager(invalidBackupDirectory);
+        SystemInspector systemInspector;
+        SettingsManager settingsManager(
+            temporaryDirectory.getPath() / "sim.conf"
+        );
+        const IntegrityReport report = IntegrityChecker(
+            prodInfo,
+            backupManager,
+            systemInspector,
+            settingsManager
+        ).run();
+        if (report.items[2].points != 0
+            || report.items[2].status != CheckStatus::ERROR)
+        {
+            std::cerr << "Backup scan failure still awarded integrity points.\n";
             return false;
         }
         return true;
@@ -190,6 +225,7 @@ int main()
         ProdInfoStatus::CORRUPTED, 0, "CRITIQUE", CheckStatus::ERROR
     );
     passed &= checkRealModuleResults();
+    passed &= checkBackupScanFailure();
 
     if (!passed)
     {

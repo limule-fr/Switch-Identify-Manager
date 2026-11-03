@@ -10,13 +10,20 @@
 
 #include <cstdio>
 #include <cstring>
-#include <cerrno>
 #include <string>
-#include <sys/stat.h>
 
 namespace
 {
     constexpr int MENU_ITEM_COUNT = 7;
+
+    bool isSimpleFilename(const std::string& value)
+    {
+        return !value.empty()
+            && value != "."
+            && value != ".."
+            && value.find('/') == std::string::npos
+            && value.find('\\') == std::string::npos;
+    }
 
     bool promptForPath(
         const char* header,
@@ -105,8 +112,37 @@ namespace
             return;
         }
 
+        const std::string destination = value;
+        std::printf(
+            "%s: sdmc:/switch/SIM/backups/%s\n%s: %s\n",
+            localization.text("backup.restore_source").c_str(),
+            backupName.c_str(),
+            localization.text("backup.restore_destination").c_str(),
+            destination.c_str()
+        );
+        std::printf(
+            "%s %s\n",
+            localization.text("backup.restore_confirmation").c_str(),
+            localization.text("restore.confirm_yes").c_str()
+        );
+        consoleUpdate(NULL);
+        std::string confirmation;
+        const std::string confirmationHeader =
+            localization.text("backup.restore_confirmation") + " "
+            + localization.text("restore.confirm_yes");
+        if (!promptForPath(
+                confirmationHeader.c_str(),
+                confirmation,
+                localization
+            )
+            || confirmation != localization.text("restore.confirm_yes"))
+        {
+            message = localization.text("backup.restore_cancelled");
+            return;
+        }
+
         const BackupOperationResult result =
-            backupManager.restoreBackup(backupName, value);
+            backupManager.restoreBackup(backupName, destination, true);
         message = localization.translate(result.message);
         if (result.success)
         {
@@ -123,25 +159,36 @@ namespace
         std::string& message
     )
     {
-        std::string destination;
+        std::string filename;
         if (!promptForPath(
                 localization.text("switch.report_path_header").c_str(),
-                destination,
+                filename,
                 localization
             ))
         {
-            if (!destination.empty())
+            if (!filename.empty())
             {
-                message = destination;
+                message = filename;
             }
             return;
         }
 
-        if (mkdir("sdmc:/switch/SIM", 0777) != 0 && errno != EEXIST)
+        if (!isSimpleFilename(filename))
         {
-            message = localization.text("switch.settings_directory_error");
+            message = localization.text("message.invalid_input");
             return;
         }
+        const SettingsSaveResult reportDirectory =
+            SettingsManager(
+                "sdmc:/switch/SIM/reports/SIM-report.txt"
+            ).ensureParentDirectory();
+        if (!reportDirectory.success)
+        {
+            message = localization.translate(reportDirectory.error);
+            return;
+        }
+        const std::string destination =
+            "sdmc:/switch/SIM/reports/" + filename;
 
         const std::string report = reportGenerator.generateText(
             integrityChecker.run(),
@@ -370,6 +417,9 @@ namespace
                     case CheckStatus::ERROR:
                         status = "ERROR";
                         break;
+                    case CheckStatus::NOT_VERIFIED:
+                        status = "NOT VERIFIED";
+                        break;
                 }
                 std::printf(
                     "%s: %s (%d/%d)\n  %s\n",
@@ -386,6 +436,11 @@ namespace
                 report.score,
                 localization.text("integrity.general_status").c_str(),
                 localization.translate(report.generalStatus).c_str()
+            );
+            std::printf(
+                "%s: %d/100\n",
+                localization.text("integrity.verified_coverage").c_str(),
+                report.maximumVerifiedScore
             );
         }
         else if (selected == 4)
@@ -524,11 +579,12 @@ int main()
                             break;
                     }
 
-                    if (mkdir("sdmc:/switch/SIM", 0777) != 0
-                        && errno != EEXIST)
+                    const SettingsSaveResult directoryResult =
+                        settingsManager.ensureParentDirectory();
+                    if (!directoryResult.success)
                     {
                         settingsMessage =
-                            localization.text("switch.settings_directory_error");
+                            localization.translate(directoryResult.error);
                         showInformation = true;
                     }
                     else

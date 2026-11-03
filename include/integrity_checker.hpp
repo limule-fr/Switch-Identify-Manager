@@ -14,7 +14,8 @@ enum class CheckStatus
 {
     OK,
     WARNING,
-    ERROR
+    ERROR,
+    NOT_VERIFIED
 };
 
 struct IntegrityItem
@@ -29,6 +30,7 @@ struct IntegrityItem
 struct IntegrityReport
 {
     int score;
+    int maximumVerifiedScore;
     std::string generalStatus;
     std::vector<IntegrityItem> items;
 };

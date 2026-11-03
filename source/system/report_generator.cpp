@@ -15,6 +15,8 @@ namespace
                 return "WARNING";
             case CheckStatus::ERROR:
                 return "ERROR";
+            case CheckStatus::NOT_VERIFIED:
+                return "NOT VERIFIED";
         }
 
         return "UNKNOWN";
@@ -47,6 +49,8 @@ std::string ReportGenerator::generateText(
     report += localization.text("report.integrity") + "\n";
     report += localization.text("report.score") + " : "
             + std::to_string(integrityReport.score) + "/100\n";
+    report += localization.text("integrity.verified_coverage") + " : "
+            + std::to_string(integrityReport.maximumVerifiedScore) + "/100\n";
     report += localization.text("report.overall") + " : "
             + localization.translate(integrityReport.generalStatus) + "\n";
     for (const IntegrityItem& item : integrityReport.items)

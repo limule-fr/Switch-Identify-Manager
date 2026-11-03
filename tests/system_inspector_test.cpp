@@ -15,6 +15,11 @@ int main()
         std::cerr << "PC simulator unexpectedly reports hardware inspection.\n";
         return 1;
     }
+    if (report.integrityCheckPerformed)
+    {
+        std::cerr << "PC simulator unexpectedly reports an integrity check.\n";
+        return 1;
+    }
 
     bool hasNandAccessNotice = false;
     bool hasProdInfoAccessNotice = false;

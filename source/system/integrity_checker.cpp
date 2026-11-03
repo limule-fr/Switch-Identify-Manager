@@ -22,7 +22,7 @@ IntegrityReport IntegrityChecker::run() const
 #ifdef __SWITCH__
     report.items.push_back({
         "PRODINFO",
-        CheckStatus::WARNING,
+        CheckStatus::NOT_VERIFIED,
         0,
         40,
         "Inspection PRODINFO indisponible; aucune donnee sensible n'est lue."
@@ -75,14 +75,14 @@ IntegrityReport IntegrityChecker::run() const
     const SystemInspectionReport systemReport = systemInspector.run();
     report.items.push_back({
         "SYSTEM DATA",
-        systemReport.inspectionAvailable
+        systemReport.integrityCheckPerformed
             ? CheckStatus::OK
-            : CheckStatus::WARNING,
-        systemReport.inspectionAvailable ? 25 : 0,
+            : CheckStatus::NOT_VERIFIED,
+        systemReport.integrityCheckPerformed ? 25 : 0,
         25,
-        systemReport.inspectionAvailable
-            ? "Informations systeme lues; aucun controle d'integrite materielle n'est effectue."
-            : "Diagnostic materiel indisponible dans le simulateur PC."
+        systemReport.integrityCheckPerformed
+            ? "Controle d'integrite materielle effectue."
+            : "Diagnostic materiel non effectue; controle non verifie."
     });
 
     const BackupScanResult backupResult = backupManager.scan();
@@ -102,12 +102,14 @@ IntegrityReport IntegrityChecker::run() const
         }
     }
 
-    const int backupPoints = allBackupsVerified
-        ? 20
-        : backupResult.entries.empty()
-            ? 0
-            : verifiedBackups * 20
-                / static_cast<int>(backupResult.entries.size());
+    const int backupPoints = !backupResult.error.empty()
+        ? 0
+        : allBackupsVerified
+            ? 20
+            : backupResult.entries.empty()
+                ? 0
+                : verifiedBackups * 20
+                    / static_cast<int>(backupResult.entries.size());
     const CheckStatus backupStatus = !backupResult.error.empty()
         ? CheckStatus::ERROR
         : allBackupsVerified
@@ -147,6 +149,10 @@ IntegrityReport IntegrityChecker::run() const
     for (const IntegrityItem& item : report.items)
     {
         report.score += item.points;
+        if (item.status != CheckStatus::NOT_VERIFIED)
+        {
+            report.maximumVerifiedScore += item.maxPoints;
+        }
     }
 
     if (report.score == 100)
@@ -183,6 +189,9 @@ std::string IntegrityChecker::statusToString(
 
         case CheckStatus::ERROR:
             return "ERROR";
+
+        case CheckStatus::NOT_VERIFIED:
+            return "NOT VERIFIED";
     }
 
     return "UNKNOWN";
@@ -216,6 +225,8 @@ void IntegrityChecker::displayReport(const Localization& localization) const
     std::cout << "----------------------------------------\n";
     std::cout << localization.text("integrity.score") << " : "
               << report.score << "/100\n";
+    std::cout << localization.text("integrity.verified_coverage") << " : "
+              << report.maximumVerifiedScore << "/100\n";
     std::cout << localization.text("integrity.general_status") << " : "
               << localization.translate(report.generalStatus) << "\n";
     std::cout << "========================================\n";

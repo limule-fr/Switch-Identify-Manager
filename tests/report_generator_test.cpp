@@ -47,6 +47,7 @@ int main()
 {
     IntegrityReport integrityReport{
         85,
+        75,
         "BON",
         {
             {
@@ -55,11 +56,19 @@ int main()
                 25,
                 40,
                 "Donnees simulees masquees."
+            },
+            {
+                "SYSTEM DATA",
+                CheckStatus::NOT_VERIFIED,
+                0,
+                25,
+                "Diagnostic materiel non effectue; controle non verifie."
             }
         }
     };
     SystemInspectionReport systemReport{
         "SIMULATEUR PC",
+        false,
         false,
         {
             {"Acces NAND", "Non effectue"},
@@ -85,6 +94,9 @@ int main()
         || !contains(report, "personal-save.dat (123 octets)")
         || !contains(report, "Acces NAND : Non effectue")
         || !contains(report, "ne garantit pas l'acces aux services Nintendo")
+        || !contains(report, "ne certifie pas l'etat reel")
+        || !contains(report, "Couverture des controles verifies : 75/100")
+        || !contains(report, "DONNEES SYSTEME : NON VERIFIE")
         || !contains(report, "SHA-256 est calcule")
         || !contains(report, "VERIFIEE : La somme SHA-256 correspond.")
         || !contains(

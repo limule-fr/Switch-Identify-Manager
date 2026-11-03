@@ -40,6 +40,18 @@ namespace
 int main()
 {
     TemporaryDirectory temporaryDirectory;
+    const std::filesystem::path nestedConfig =
+        temporaryDirectory.getPath() / "new-settings" / "nested" / "sim.conf";
+    const SettingsManager nestedSettings(nestedConfig);
+    const SettingsSaveResult createdDirectory =
+        nestedSettings.ensureParentDirectory();
+    if (!createdDirectory.success
+        || !std::filesystem::is_directory(nestedConfig.parent_path()))
+    {
+        std::cerr << "Settings manager did not safely create its directory.\n";
+        return 1;
+    }
+
     const std::filesystem::path config =
         temporaryDirectory.getPath() / "sim.conf";
     const SettingsManager settings(config);
@@ -133,6 +145,64 @@ int main()
             std::cerr << "Symbolic-link target was unexpectedly changed.\n";
             return 1;
         }
+    }
+
+    const std::filesystem::path actualSettingsDirectory =
+        temporaryDirectory.getPath() / "actual-settings";
+    std::filesystem::create_directory(actualSettingsDirectory);
+    {
+        std::ofstream output(actualSettingsDirectory / "linked-parent.conf");
+        output << "language=en\n";
+    }
+    const std::filesystem::path linkedSettingsDirectory =
+        temporaryDirectory.getPath() / "linked-settings";
+    std::error_code parentSymlinkError;
+    std::filesystem::create_directory_symlink(
+        actualSettingsDirectory,
+        linkedSettingsDirectory,
+        parentSymlinkError
+    );
+    if (!parentSymlinkError)
+    {
+        const SettingsManager settingsThroughLink(
+            linkedSettingsDirectory / "linked-parent.conf"
+        );
+        if (settingsThroughLink.save(Language::SPANISH).success)
+        {
+            std::cerr << "Settings save followed a symbolic-link parent.\n";
+            return 1;
+        }
+        const SettingsLoadResult linkedParentLoad =
+            settingsThroughLink.load();
+        if (linkedParentLoad.warning.empty()
+            || linkedParentLoad.language != Language::FRENCH)
+        {
+            std::cerr << "Settings load accepted a symbolic-link parent.\n";
+            return 1;
+        }
+    }
+
+    const std::filesystem::path nonDirectoryParent =
+        temporaryDirectory.getPath() / "not-a-directory";
+    {
+        std::ofstream output(nonDirectoryParent);
+        output << "block";
+    }
+    const SettingsManager settingsBelowFile(
+        nonDirectoryParent / "sim.conf"
+    );
+    if (settingsBelowFile.save(Language::ENGLISH).success)
+    {
+        std::cerr << "Settings save accepted a non-directory parent.\n";
+        return 1;
+    }
+    const SettingsLoadResult settingsBelowFileLoad =
+        settingsBelowFile.load();
+    if (settingsBelowFileLoad.warning.empty()
+        || settingsBelowFileLoad.language != Language::FRENCH)
+    {
+        std::cerr << "Settings load accepted a non-directory parent.\n";
+        return 1;
     }
 
     std::cout << "All settings tests passed.\n";

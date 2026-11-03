@@ -484,8 +484,34 @@ int main()
                     return 0;
                 }
 
+                std::cout << localization.text("backup.restore_source")
+                          << " : " << backupName << "\n"
+                          << localization.text("backup.restore_destination")
+                          << " : " << destinationPath << "\n"
+                          << localization.text("backup.restore_confirmation")
+                          << " " << localization.text("restore.confirm_yes")
+                          << " : ";
+                std::string confirmation;
+                if (!std::getline(std::cin, confirmation))
+                {
+                    std::cout << "\n" << localization.text("message.closing") << "\n";
+                    return 0;
+                }
+                const bool confirmed =
+                    confirmation == localization.text("restore.confirm_yes");
+                if (!confirmed)
+                {
+                    std::cout << localization.text("backup.restore_cancelled")
+                              << "\n";
+                    break;
+                }
+
                 const BackupOperationResult restored =
-                    backupManager.restoreBackup(backupName, destinationPath);
+                    backupManager.restoreBackup(
+                        backupName,
+                        destinationPath,
+                        confirmed
+                    );
                 if (!restored.success)
                 {
                     recordLog(logger, LogLevel::ERROR, "Backup restoration failed.");

@@ -59,7 +59,8 @@ public:
     ) const;
     BackupOperationResult restoreBackup(
         const std::string& backupName,
-        const std::filesystem::path& destinationPath
+        const std::filesystem::path& destinationPath,
+        bool confirmed
     ) const;
 
 private:

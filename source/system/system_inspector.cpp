@@ -14,6 +14,7 @@ SystemInspectionReport SystemInspector::run() const
     SystemInspectionReport report;
     report.mode = "NINTENDO SWITCH";
     report.inspectionAvailable = true;
+    report.integrityCheckPerformed = false;
 
     Result result = setsysInitialize();
     if (R_FAILED(result))
@@ -83,6 +84,7 @@ SystemInspectionReport SystemInspector::run() const
 #else
     return {
         "SIMULATEUR PC",
+        false,
         false,
         {
             {
