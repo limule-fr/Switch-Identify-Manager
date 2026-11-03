@@ -88,6 +88,87 @@ int main()
         return 1;
     }
 
+    const std::filesystem::path sourceDirectory = directory / "source-input";
+    std::filesystem::create_directory(sourceDirectory);
+    const std::filesystem::path sourcePath =
+        sourceDirectory / "created-save.dat";
+    if (!writeFile(sourcePath, "backup contents"))
+    {
+        std::cerr << "Could not create source file for backup operation tests.\n";
+        return 1;
+    }
+
+    const BackupManager manager(directory);
+    const BackupOperationResult created = manager.createBackup(sourcePath);
+    if (!created.success
+        || created.path != directory / "created-save.dat")
+    {
+        std::cerr << "Backup creation failed: " << created.message << "\n";
+        return 1;
+    }
+    const BackupScanResult createdScan = manager.scan();
+    bool createdBackupVerified = false;
+    for (const BackupEntry& entry : createdScan.entries)
+    {
+        if (entry.name == "created-save.dat"
+            && entry.integrityStatus == BackupIntegrityStatus::VERIFIED)
+        {
+            createdBackupVerified = true;
+        }
+    }
+    if (!createdBackupVerified)
+    {
+        std::cerr << "New backup did not receive a valid SHA-256 reference.\n";
+        return 1;
+    }
+
+    const std::filesystem::path restoreDirectory = directory / "restored";
+    std::filesystem::create_directory(restoreDirectory);
+    const std::filesystem::path restorePath =
+        restoreDirectory / "restored-save.dat";
+    const BackupOperationResult restored =
+        manager.restoreBackup("created-save.dat", restorePath);
+    if (!restored.success)
+    {
+        std::cerr << "Backup restoration failed: " << restored.message << "\n";
+        return 1;
+    }
+    std::ifstream restoredFile(restorePath, std::ios::binary);
+    std::string restoredContents;
+    std::getline(restoredFile, restoredContents);
+    if (restoredContents != "backup contents")
+    {
+        std::cerr << "Restored file contents did not match the backup.\n";
+        return 1;
+    }
+
+    const BackupOperationResult refusedOverwrite =
+        manager.restoreBackup("created-save.dat", restorePath);
+    std::ifstream unchangedFile(restorePath, std::ios::binary);
+    std::string unchangedContents;
+    std::getline(unchangedFile, unchangedContents);
+    if (refusedOverwrite.success || unchangedContents != "backup contents")
+    {
+        std::cerr << "Restore overwrote an existing destination.\n";
+        return 1;
+    }
+
+    const BackupOperationResult refusedUnverified =
+        manager.restoreBackup("empty-save.dat", restoreDirectory / "empty.dat");
+    if (refusedUnverified.success)
+    {
+        std::cerr << "Restore accepted a backup without a reference checksum.\n";
+        return 1;
+    }
+
+    const BackupOperationResult refusedDuplicate =
+        manager.createBackup(sourcePath);
+    if (refusedDuplicate.success)
+    {
+        std::cerr << "Backup creation overwrote an existing backup.\n";
+        return 1;
+    }
+
     bool foundReadable = false;
     bool foundEmpty = false;
     for (const BackupEntry& entry : result.entries)

@@ -11,6 +11,7 @@ struct SettingsLoadResult
 {
     Language language;
     std::string warning;
+    bool loadedFromFile;
 };
 
 struct SettingsSaveResult

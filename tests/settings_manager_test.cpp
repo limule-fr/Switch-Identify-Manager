@@ -45,7 +45,9 @@ int main()
     const SettingsManager settings(config);
 
     const SettingsLoadResult defaults = settings.load();
-    if (defaults.language != Language::FRENCH || !defaults.warning.empty())
+    if (defaults.language != Language::FRENCH
+        || !defaults.warning.empty()
+        || defaults.loadedFromFile)
     {
         std::cerr << "Missing config should default to French without warning.\n";
         return 1;
@@ -64,7 +66,9 @@ int main()
             return 1;
         }
         const SettingsLoadResult loaded = settings.load();
-        if (!loaded.warning.empty() || loaded.language != language)
+        if (!loaded.warning.empty()
+            || loaded.language != language
+            || !loaded.loadedFromFile)
         {
             std::cerr << "Saved language did not round-trip.\n";
             return 1;
@@ -77,7 +81,8 @@ int main()
     }
     const SettingsLoadResult invalidSettings = settings.load();
     if (invalidSettings.language != Language::FRENCH
-        || invalidSettings.warning.empty())
+        || invalidSettings.warning.empty()
+        || invalidSettings.loadedFromFile)
     {
         std::cerr << "Unsupported language should report a warning.\n";
         return 1;

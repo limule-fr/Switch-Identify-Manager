@@ -49,11 +49,16 @@ void recordLog(Logger& logger, LogLevel level, const std::string& event)
 int main()
 {
     ProdInfoSimulator prodInfo;
-    IntegrityChecker integrityChecker(prodInfo);
     BackupManager backupManager;
     SystemInspector systemInspector;
     ReportGenerator reportGenerator;
     SettingsManager settingsManager;
+    IntegrityChecker integrityChecker(
+        prodInfo,
+        backupManager,
+        systemInspector,
+        settingsManager
+    );
     Logger logger;
     const SettingsLoadResult settings = settingsManager.load();
     Localization localization(settings.language);
@@ -80,6 +85,8 @@ int main()
         std::cout << "[5] " << localization.text("menu.report") << "\n";
         std::cout << "[6] " << localization.text("menu.change_prodinfo") << "\n";
         std::cout << "[7] " << localization.text("menu.settings") << "\n";
+        std::cout << "[8] " << localization.text("menu.create_backup") << "\n";
+        std::cout << "[9] " << localization.text("menu.restore_backup") << "\n";
         std::cout << "[0] " << localization.text("menu.exit") << "\n\n";
 
         std::cout << localization.text("prompt.selection");
@@ -359,6 +366,7 @@ int main()
                               << "\n";
                     break;
                 }
+
                 if (languageChoice == 0)
                 {
                     break;
@@ -408,6 +416,89 @@ int main()
                     localization = Localization(selectedLanguage);
                     recordLog(logger, LogLevel::INFO, "Language setting changed.");
                     std::cout << localization.text("settings.saved") << "\n";
+                }
+                break;
+            }
+
+            case 8:
+            {
+                std::cout << localization.text("backup.source_prompt");
+                std::string sourcePath;
+                if (!std::getline(std::cin, sourcePath))
+                {
+                    std::cout << "\n" << localization.text("message.closing") << "\n";
+                    return 0;
+                }
+
+                const BackupOperationResult result =
+                    backupManager.createBackup(sourcePath);
+                if (!result.success)
+                {
+                    recordLog(logger, LogLevel::ERROR, "Backup creation failed.");
+                    std::cout << localization.text("backup.operation_error")
+                              << " : " << localization.translate(result.message)
+                              << "\n";
+                }
+                else
+                {
+                    recordLog(logger, LogLevel::INFO, "Backup created.");
+                    std::cout << localization.translate(result.message)
+                              << " : " << result.path.string() << "\n";
+                }
+                break;
+            }
+
+            case 9:
+            {
+                const BackupScanResult result = backupManager.scan();
+                if (!result.error.empty())
+                {
+                    std::cout << localization.text("backup.error") << " : "
+                              << localization.translate(result.error) << "\n";
+                    break;
+                }
+                for (const BackupEntry& entry : result.entries)
+                {
+                    std::cout << "- " << entry.name << " : "
+                              << localization.text(
+                                  entry.integrityStatus
+                                          == BackupIntegrityStatus::VERIFIED
+                                      ? "backup.integrity.verified"
+                                      : "backup.integrity.not_verified"
+                              )
+                              << "\n";
+                }
+
+                std::cout << localization.text("backup.restore_name_prompt");
+                std::string backupName;
+                if (!std::getline(std::cin, backupName))
+                {
+                    std::cout << "\n" << localization.text("message.closing") << "\n";
+                    return 0;
+                }
+                std::cout << localization.text("backup.restore_destination_prompt");
+                std::string destinationPath;
+                if (!std::getline(std::cin, destinationPath))
+                {
+                    std::cout << "\n" << localization.text("message.closing") << "\n";
+                    return 0;
+                }
+
+                const BackupOperationResult restored =
+                    backupManager.restoreBackup(backupName, destinationPath);
+                if (!restored.success)
+                {
+                    recordLog(logger, LogLevel::ERROR, "Backup restoration failed.");
+                    std::cout << localization.text("backup.operation_error")
+                              << " : "
+                              << localization.translate(restored.message)
+                              << "\n";
+                }
+                else
+                {
+                    recordLog(logger, LogLevel::INFO, "Backup restored.");
+                    std::cout << localization.translate(restored.message)
+                              << " : " << restored.path.string() << "\n";
                 }
                 break;
             }

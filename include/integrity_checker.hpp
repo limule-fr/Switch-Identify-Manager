@@ -3,6 +3,9 @@
 
 #include "localization.hpp"
 #include "prodinfo.hpp"
+#include "backup_manager.hpp"
+#include "system_inspector.hpp"
+#include "settings_manager.hpp"
 
 #include <string>
 #include <vector>
@@ -33,7 +36,12 @@ struct IntegrityReport
 class IntegrityChecker
 {
 public:
-    explicit IntegrityChecker(const ProdInfoSimulator& prodInfo);
+    IntegrityChecker(
+        const ProdInfoSimulator& prodInfo,
+        const BackupManager& backupManager,
+        const SystemInspector& systemInspector,
+        const SettingsManager& settingsManager
+    );
 
     IntegrityReport run() const;
     void displayReport(
@@ -42,6 +50,9 @@ public:
 
 private:
     const ProdInfoSimulator& prodInfo;
+    const BackupManager& backupManager;
+    const SystemInspector& systemInspector;
+    const SettingsManager& settingsManager;
 
     std::string statusToString(CheckStatus status) const;
 };

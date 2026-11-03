@@ -41,12 +41,26 @@ struct BackupScanResult
     std::string error;
 };
 
+struct BackupOperationResult
+{
+    bool success;
+    std::string message;
+    std::filesystem::path path;
+};
+
 class BackupManager
 {
 public:
     explicit BackupManager(std::filesystem::path backupDirectory = "backups");
 
     BackupScanResult scan() const;
+    BackupOperationResult createBackup(
+        const std::filesystem::path& sourcePath
+    ) const;
+    BackupOperationResult restoreBackup(
+        const std::string& backupName,
+        const std::filesystem::path& destinationPath
+    ) const;
 
 private:
     std::filesystem::path backupDirectory;

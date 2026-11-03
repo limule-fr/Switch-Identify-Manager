@@ -38,7 +38,11 @@ SettingsLoadResult SettingsManager::load() const
         std::filesystem::symlink_status(configPath, statusError);
     if (!statusError && std::filesystem::is_symlink(status))
     {
-        return {Language::FRENCH, "Configuration file cannot be a symbolic link."};
+        return {
+            Language::FRENCH,
+            "Configuration file cannot be a symbolic link.",
+            false
+        };
     }
 
     std::ifstream input(configPath);
@@ -48,38 +52,47 @@ SettingsLoadResult SettingsManager::load() const
         if (statusError == std::errc::no_such_file_or_directory
             || (!std::filesystem::exists(configPath, error) && !error))
         {
-            return {Language::FRENCH, {}};
+            return {Language::FRENCH, {}, false};
         }
         return {
             Language::FRENCH,
-            "Could not read configuration file."
+            "Could not read configuration file.",
+            false
         };
     }
 
     std::string line;
     if (!std::getline(input, line) || line.rfind("language=", 0) != 0)
     {
-        return {Language::FRENCH, "Invalid configuration format."};
+        return {Language::FRENCH, "Invalid configuration format.", false};
     }
 
     bool valid = false;
     const Language language = languageFromCode(line.substr(9), valid);
     if (!valid)
     {
-        return {Language::FRENCH, "Unsupported language code."};
+        return {Language::FRENCH, "Unsupported language code.", false};
     }
 
     std::string extraLine;
     if (std::getline(input, extraLine))
     {
-        return {Language::FRENCH, "Unexpected extra configuration data."};
+        return {
+            Language::FRENCH,
+            "Unexpected extra configuration data.",
+            false
+        };
     }
     if (input.bad())
     {
-        return {Language::FRENCH, "Error while reading configuration file."};
+        return {
+            Language::FRENCH,
+            "Error while reading configuration file.",
+            false
+        };
     }
 
-    return {language, {}};
+    return {language, {}, true};
 }
 
 SettingsSaveResult SettingsManager::save(Language language) const

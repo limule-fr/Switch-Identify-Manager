@@ -60,6 +60,7 @@ int main()
     };
     SystemInspectionReport systemReport{
         "SIMULATEUR PC",
+        false,
         {
             {"Acces NAND", "Non effectue"},
             {"Acces PRODINFO", "Non effectue"}

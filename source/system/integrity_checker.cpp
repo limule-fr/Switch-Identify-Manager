@@ -3,19 +3,31 @@
 #include <iostream>
 
 IntegrityChecker::IntegrityChecker(
-    const ProdInfoSimulator& prodInfo
+    const ProdInfoSimulator& prodInfo,
+    const BackupManager& backupManager,
+    const SystemInspector& systemInspector,
+    const SettingsManager& settingsManager
 )
-    : prodInfo(prodInfo)
+    : prodInfo(prodInfo),
+      backupManager(backupManager),
+      systemInspector(systemInspector),
+      settingsManager(settingsManager)
 {
 }
 
 IntegrityReport IntegrityChecker::run() const
 {
-    IntegrityReport report;
+    IntegrityReport report{};
 
-    report.score = 0;
-
-    // 1. Inspection PRODINFO : 40 points
+#ifdef __SWITCH__
+    report.items.push_back({
+        "PRODINFO",
+        CheckStatus::WARNING,
+        0,
+        40,
+        "Inspection PRODINFO indisponible; aucune donnee sensible n'est lue."
+    });
+#else
     switch (prodInfo.getStatus())
     {
         case ProdInfoStatus::INTACT:
@@ -58,41 +70,85 @@ IntegrityReport IntegrityChecker::run() const
             });
             break;
     }
+#endif
 
-    // 2. Donnees systeme : 25 points
+    const SystemInspectionReport systemReport = systemInspector.run();
     report.items.push_back({
         "SYSTEM DATA",
-        CheckStatus::OK,
+        systemReport.inspectionAvailable
+            ? CheckStatus::OK
+            : CheckStatus::WARNING,
+        systemReport.inspectionAvailable ? 25 : 0,
         25,
-        25,
-        "Structure fictive coherente."
+        systemReport.inspectionAvailable
+            ? "Informations systeme lues; aucun controle d'integrite materielle n'est effectue."
+            : "Diagnostic materiel indisponible dans le simulateur PC."
     });
 
-    // 3. Sauvegarde : 20 points
+    const BackupScanResult backupResult = backupManager.scan();
+    int verifiedBackups = 0;
+    bool allBackupsVerified = !backupResult.entries.empty()
+                           && backupResult.error.empty();
+    for (const BackupEntry& entry : backupResult.entries)
+    {
+        if (entry.status == BackupReadStatus::ERROR
+            || entry.integrityStatus != BackupIntegrityStatus::VERIFIED)
+        {
+            allBackupsVerified = false;
+        }
+        else
+        {
+            ++verifiedBackups;
+        }
+    }
+
+    const int backupPoints = allBackupsVerified
+        ? 20
+        : backupResult.entries.empty()
+            ? 0
+            : verifiedBackups * 20
+                / static_cast<int>(backupResult.entries.size());
+    const CheckStatus backupStatus = !backupResult.error.empty()
+        ? CheckStatus::ERROR
+        : allBackupsVerified
+            ? CheckStatus::OK
+            : backupResult.entries.empty() || backupPoints > 0
+                ? CheckStatus::WARNING
+                : CheckStatus::ERROR;
     report.items.push_back({
         "BACKUP",
-        CheckStatus::OK,
+        backupStatus,
+        backupPoints,
         20,
-        20,
-        "Sauvegarde fictive disponible."
+        !backupResult.error.empty()
+            ? "Verification des sauvegardes impossible."
+            : backupResult.entries.empty()
+                ? "Aucune sauvegarde disponible."
+                : allBackupsVerified
+                    ? "Toutes les sauvegardes ont une somme SHA-256 valide."
+                    : "Certaines sauvegardes ne sont pas verifiees."
     });
 
-    // 4. Configuration : 15 points
+    const SettingsLoadResult settings = settingsManager.load();
+    const bool settingsValid = settings.loadedFromFile
+                            && settings.warning.empty();
     report.items.push_back({
         "CONFIGURATION",
-        CheckStatus::OK,
+        settingsValid ? CheckStatus::OK : CheckStatus::WARNING,
+        settingsValid ? 15 : 0,
         15,
-        15,
-        "Configuration fictive valide."
+        settingsValid
+            ? "Configuration valide chargee depuis le fichier."
+            : settings.warning.empty()
+                ? "Aucun fichier de configuration persistant."
+                : "Configuration invalide ou illisible."
     });
 
-    // Calcul du score
     for (const IntegrityItem& item : report.items)
     {
         report.score += item.points;
     }
 
-    // Etat general
     if (report.score == 100)
     {
         report.generalStatus = "EXCELLENT";
@@ -134,7 +190,7 @@ std::string IntegrityChecker::statusToString(
 
 void IntegrityChecker::displayReport(const Localization& localization) const
 {
-    IntegrityReport report = run();
+    const IntegrityReport report = run();
 
     std::cout << "\n";
     std::cout << "========================================\n";
@@ -158,12 +214,9 @@ void IntegrityChecker::displayReport(const Localization& localization) const
     }
 
     std::cout << "----------------------------------------\n";
-
     std::cout << localization.text("integrity.score") << " : "
               << report.score << "/100\n";
-
     std::cout << localization.text("integrity.general_status") << " : "
               << localization.translate(report.generalStatus) << "\n";
-
     std::cout << "========================================\n";
 }

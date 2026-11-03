@@ -10,6 +10,11 @@ int main()
         std::cerr << "System inspector did not identify its PC mode.\n";
         return 1;
     }
+    if (report.inspectionAvailable)
+    {
+        std::cerr << "PC simulator unexpectedly reports hardware inspection.\n";
+        return 1;
+    }
 
     bool hasNandAccessNotice = false;
     bool hasProdInfoAccessNotice = false;

@@ -35,7 +35,11 @@ SOURCES = source/main.cpp \
 INTEGRITY_TEST_SOURCES = tests/integrity_checker_test.cpp \
                          source/system/prodinfo.cpp \
                          source/system/integrity_checker.cpp \
-                         source/system/localization.cpp
+                         source/system/localization.cpp \
+                         source/system/backup_manager.cpp \
+                         source/system/system_inspector.cpp \
+                         source/system/settings_manager.cpp \
+                         source/system/sha256.cpp
 
 BACKUP_TEST_SOURCES = tests/backup_manager_test.cpp \
                       source/system/backup_manager.cpp \
@@ -65,7 +69,7 @@ $(TARGET): $(SOURCES) include/prodinfo.hpp include/integrity_checker.hpp include
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) $(SOURCES) -o $(TARGET)
 
-$(INTEGRITY_TEST_TARGET): $(INTEGRITY_TEST_SOURCES) include/prodinfo.hpp include/integrity_checker.hpp include/localization.hpp
+$(INTEGRITY_TEST_TARGET): $(INTEGRITY_TEST_SOURCES) include/prodinfo.hpp include/integrity_checker.hpp include/backup_manager.hpp include/system_inspector.hpp include/settings_manager.hpp include/sha256.hpp include/localization.hpp
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) $(INTEGRITY_TEST_SOURCES) -o $(INTEGRITY_TEST_TARGET)
 
@@ -93,7 +97,7 @@ $(SHA256_TEST_TARGET): $(SHA256_TEST_SOURCES) include/sha256.hpp
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) $(SHA256_TEST_SOURCES) -o $(SHA256_TEST_TARGET)
 
-$(SWITCH_NRO): source/platform/switch_main.cpp source/system/localization.cpp source/system/settings_manager.cpp source/system/backup_manager.cpp source/system/sha256.cpp include/localization.hpp include/settings_manager.hpp include/backup_manager.hpp include/sha256.hpp
+$(SWITCH_NRO): source/platform/switch_main.cpp source/system/localization.cpp source/system/settings_manager.cpp source/system/backup_manager.cpp source/system/sha256.cpp source/system/integrity_checker.cpp source/system/prodinfo.cpp source/system/system_inspector.cpp source/system/report_generator.cpp include/localization.hpp include/settings_manager.hpp include/backup_manager.hpp include/sha256.hpp include/integrity_checker.hpp include/prodinfo.hpp include/system_inspector.hpp include/report_generator.hpp
 	@if [ -z "$(DEVKITPRO)" ]; then echo "Set DEVKITPRO to build the Switch NRO."; exit 1; fi
 	mkdir -p build/switch
 	$(SWITCH_CXX) $(SWITCH_FLAGS) \
@@ -101,7 +105,9 @@ $(SWITCH_NRO): source/platform/switch_main.cpp source/system/localization.cpp so
 		-Wl,--gc-sections \
 		source/platform/switch_main.cpp source/system/localization.cpp \
 		source/system/settings_manager.cpp source/system/backup_manager.cpp \
-		source/system/sha256.cpp \
+		source/system/sha256.cpp source/system/integrity_checker.cpp \
+		source/system/prodinfo.cpp source/system/system_inspector.cpp \
+		source/system/report_generator.cpp \
 		-L$(DEVKITPRO)/libnx/lib -lnx -o $(SWITCH_ELF)
 	$(DEVKITPRO)/tools/bin/elf2nro $(SWITCH_ELF) $(SWITCH_NRO)
 

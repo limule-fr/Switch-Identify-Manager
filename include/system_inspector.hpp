@@ -15,6 +15,7 @@ struct SystemInfoItem
 struct SystemInspectionReport
 {
     std::string mode;
+    bool inspectionAvailable;
     std::vector<SystemInfoItem> items;
 };
 

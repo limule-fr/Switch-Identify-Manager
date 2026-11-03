@@ -1,6 +1,10 @@
 #include "localization.hpp"
 #include "backup_manager.hpp"
+#include "integrity_checker.hpp"
+#include "prodinfo.hpp"
+#include "report_generator.hpp"
 #include "settings_manager.hpp"
+#include "system_inspector.hpp"
 
 #include <switch.h>
 
@@ -12,7 +16,149 @@
 
 namespace
 {
-    constexpr int MENU_ITEM_COUNT = 5;
+    constexpr int MENU_ITEM_COUNT = 7;
+
+    bool promptForPath(
+        const char* header,
+        std::string& value,
+        const Localization& localization
+    )
+    {
+        SwkbdConfig keyboard{};
+        if (R_FAILED(swkbdCreate(&keyboard, 0)))
+        {
+            value = localization.text("switch.keyboard_error");
+            return false;
+        }
+
+        swkbdConfigMakePresetDefault(&keyboard);
+        swkbdConfigSetHeaderText(&keyboard, header);
+        char buffer[512] = {};
+        const Result result = swkbdShow(&keyboard, buffer, sizeof(buffer));
+        swkbdClose(&keyboard);
+        if (R_FAILED(result))
+        {
+            value = localization.text("switch.keyboard_error");
+            return false;
+        }
+
+        value = buffer;
+        return !value.empty();
+    }
+
+    void performBackupAction(
+        bool create,
+        BackupManager& backupManager,
+        const Localization& localization,
+        std::string& message
+    )
+    {
+        std::string value;
+        if (create)
+        {
+            if (!promptForPath(
+                    localization.text("backup.source_prompt").c_str(),
+                    value,
+                    localization
+                ))
+            {
+                if (!value.empty())
+                {
+                    message = value;
+                }
+                return;
+            }
+
+            const BackupOperationResult result =
+                backupManager.createBackup(value);
+            message = localization.translate(result.message);
+            if (result.success)
+            {
+                message += " : " + result.path.string();
+            }
+            return;
+        }
+
+        if (!promptForPath(
+                localization.text("backup.restore_name_prompt").c_str(),
+                value,
+                localization
+            ))
+        {
+            if (!value.empty())
+            {
+                message = value;
+            }
+            return;
+        }
+        const std::string backupName = value;
+        if (!promptForPath(
+                localization.text("backup.restore_destination_prompt").c_str(),
+                value,
+                localization
+            ))
+        {
+            if (!value.empty())
+            {
+                message = value;
+            }
+            return;
+        }
+
+        const BackupOperationResult result =
+            backupManager.restoreBackup(backupName, value);
+        message = localization.translate(result.message);
+        if (result.success)
+        {
+            message += " : " + result.path.string();
+        }
+    }
+
+    void performReportExport(
+        const IntegrityChecker& integrityChecker,
+        const SystemInspector& systemInspector,
+        const BackupManager& backupManager,
+        const ReportGenerator& reportGenerator,
+        const Localization& localization,
+        std::string& message
+    )
+    {
+        std::string destination;
+        if (!promptForPath(
+                localization.text("switch.report_path_header").c_str(),
+                destination,
+                localization
+            ))
+        {
+            if (!destination.empty())
+            {
+                message = destination;
+            }
+            return;
+        }
+
+        if (mkdir("sdmc:/switch/SIM", 0777) != 0 && errno != EEXIST)
+        {
+            message = localization.text("switch.settings_directory_error");
+            return;
+        }
+
+        const std::string report = reportGenerator.generateText(
+            integrityChecker.run(),
+            systemInspector.run(),
+            backupManager.scan(),
+            localization
+        );
+        const ReportExportResult exported =
+            reportGenerator.exportText(destination, report, false);
+        if (!exported.success)
+        {
+            message = localization.text("report.export_error") + " : "
+                    + localization.translate(exported.error);
+            return;
+        }
+        message = localization.text("report.exported") + " : " + destination;
+    }
 
     void drawMenu(int selected, const Localization& localization)
     {
@@ -26,6 +172,8 @@ namespace
             "menu.diagnostic",
             "menu.prodinfo",
             "menu.backups",
+            "menu.integrity",
+            "menu.report",
             "menu.settings",
             "switch.exit"
         };
@@ -47,7 +195,10 @@ namespace
     void drawInformation(
         int selected,
         const Localization& localization,
-        const std::string& settingsMessage
+        const std::string& settingsMessage,
+        const IntegrityChecker& integrityChecker,
+        const std::string& backupMessage,
+        const std::string& reportMessage
     )
     {
         consoleClear();
@@ -193,8 +344,55 @@ namespace
                 "\n%s\n",
                 localization.text("switch.sd_backup_notice").c_str()
             );
+            std::printf(
+                "%s\n",
+                localization.text("switch.backup_actions").c_str()
+            );
+            if (!backupMessage.empty())
+            {
+                std::printf("%s\n", backupMessage.c_str());
+            }
         }
         else if (selected == 3)
+        {
+            const IntegrityReport report = integrityChecker.run();
+            for (const IntegrityItem& item : report.items)
+            {
+                const char* status = "ERROR";
+                switch (item.status)
+                {
+                    case CheckStatus::OK:
+                        status = "OK";
+                        break;
+                    case CheckStatus::WARNING:
+                        status = "WARNING";
+                        break;
+                    case CheckStatus::ERROR:
+                        status = "ERROR";
+                        break;
+                }
+                std::printf(
+                    "%s: %s (%d/%d)\n  %s\n",
+                    localization.translate(item.name).c_str(),
+                    localization.translate(status).c_str(),
+                    item.points,
+                    item.maxPoints,
+                    localization.translate(item.message).c_str()
+                );
+            }
+            std::printf(
+                "\n%s: %d/100\n%s: %s\n",
+                localization.text("integrity.score").c_str(),
+                report.score,
+                localization.text("integrity.general_status").c_str(),
+                localization.translate(report.generalStatus).c_str()
+            );
+        }
+        else if (selected == 4)
+        {
+            std::printf("%s\n", reportMessage.c_str());
+        }
+        else if (selected == 5)
         {
             std::printf(
                 "%s : %s\n\n",
@@ -233,9 +431,21 @@ int main()
     SettingsManager settingsManager("sdmc:/switch/SIM/sim.conf");
     const SettingsLoadResult settings = settingsManager.load();
     Localization localization(settings.language);
+    ProdInfoSimulator prodInfo;
+    BackupManager backupManager("sdmc:/switch/SIM/backups");
+    SystemInspector systemInspector;
+    ReportGenerator reportGenerator;
+    IntegrityChecker integrityChecker(
+        prodInfo,
+        backupManager,
+        systemInspector,
+        settingsManager
+    );
     int selected = 0;
     bool showInformation = false;
     bool running = true;
+    std::string backupMessage;
+    std::string reportMessage;
     std::string settingsMessage =
         localization.text("switch.language_changed");
 
@@ -243,7 +453,14 @@ int main()
     {
         if (showInformation)
         {
-            drawInformation(selected, localization, settingsMessage);
+            drawInformation(
+                selected,
+                localization,
+                settingsMessage,
+                integrityChecker,
+                backupMessage,
+                reportMessage
+            );
         }
         else
         {
@@ -260,6 +477,24 @@ int main()
                 showInformation = false;
                 settingsMessage = localization.text("switch.language_changed");
             }
+            else if (selected == 2 && (keysDown & HidNpadButton_X))
+            {
+                performBackupAction(
+                    true,
+                    backupManager,
+                    localization,
+                    backupMessage
+                );
+            }
+            else if (selected == 2 && (keysDown & HidNpadButton_Y))
+            {
+                performBackupAction(
+                    false,
+                    backupManager,
+                    localization,
+                    backupMessage
+                );
+            }
         }
         else
         {
@@ -273,7 +508,7 @@ int main()
             }
             if (keysDown & HidNpadButton_A)
             {
-                if (selected == 3)
+                if (selected == 5)
                 {
                     Language nextLanguage = Language::FRENCH;
                     switch (localization.language())
@@ -315,9 +550,21 @@ int main()
                         }
                     }
                 }
-                else if (selected == 4)
+                else if (selected == 6)
                 {
                     running = false;
+                }
+                else if (selected == 4)
+                {
+                    performReportExport(
+                        integrityChecker,
+                        systemInspector,
+                        backupManager,
+                        reportGenerator,
+                        localization,
+                        reportMessage
+                    );
+                    showInformation = true;
                 }
                 else
                 {
